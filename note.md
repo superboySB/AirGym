@@ -24,7 +24,7 @@ docker run --name airgym-sim -itd --gpus all --network host --ipc=host --privile
 
 docker exec -it airgym-sim /bin/bash  # 默认进入airgym的workspace
 
-python airgym/scripts/example.py --task hovering --ctl_mode pos --num_envs 4
+python airgym/scripts/example.py --task hovering --ctl_mode rate --num_envs 4
 ```
 镜像在构建阶段已完成 `rlPx4Controller`、AirGym 以及 Isaac Gym 的安装。容器默认工作目录为 `/workspace/AirGym`，开箱即用。
 
