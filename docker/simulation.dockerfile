@@ -17,7 +17,7 @@ SHELL ["/bin/bash", "-lc"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-dev python3-pip \
     git git-lfs wget curl ca-certificates gedit \
-    build-essential libeigen3-dev unzip \
+    build-essential libeigen3-dev unzip tmux \
     libgl1 libglvnd0 libglx0 libglu1-mesa libglew-dev python3-tk \
     libegl1 libxext6 libx11-6 libxrender1 libxrandr2 libxi6 libxmu6 libxxf86vm1
 
@@ -46,7 +46,7 @@ RUN pip install \
     pillow==9.0.0
 
 RUN pip install \
-    networkx==2.8.4
+    networkx==2.8.4 tensorboard
 
 RUN pip install \
     torch==2.0.0 \

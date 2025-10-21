@@ -28,62 +28,23 @@ python airgym/scripts/example.py --task hovering --ctl_mode rate --num_envs 4
 ```
 镜像在构建阶段已完成 `rlPx4Controller`、AirGym 以及 Isaac Gym 的安装。容器默认工作目录为 `/workspace/AirGym`，开箱即用。
 
-## 2. 容器 / 裸机内的常用命令
+## 2. Planning: 深度视觉 + Rate Control
 
+- 倉庫里没有 VAE 训练脚本，`trained/vae_model.pth` 仅供推理使用；`cnn` 方案可以端到端与控制策略一起学。  
+- Planning 任务默认在每个环境的 `X152b` 机体上挂载深度相机，且 `scripts/config/ppo_planning.yaml` 已设置 `env_config.use_image=True` 与 `network.cnn`，因此直接启用即得到深度图 + 数值状态的联合观测。
+
+### 训练端到端 CNN + Rate Control
 ```bash
-# 训练
-python scripts/runner.py --task planning --ctl_mode rate --headless
-
-# 评估预训练模型
-python scripts/runner.py --play --task planning --ctl_mode rate \
-  --num_envs 4 --headless --checkpoint trained/planning_cnn_rate.pth
+python scripts/runner.py --task planning_local --ctl_mode rate --num_envs 256 --headless
+# 服务器： python scripts/runner.py --task planning_server --ctl_mode rate --num_envs 2048 --headless
 ```
+- 若算力不足，可把 `--num_envs` 调小（同时可在 `scripts/config/ppo_planning.yaml` 里调 `minibatch_size` 与 `horizon_length`）。  
+- 训练产物默认写入 `runs/`。
 
-容器默认工作目录为 `/workspace/AirGym`，镜像内已包含仓库源码。
-
----
-
-## 3. Planning 任务概览
-
-### 3.1 代码结构
-
-- 任务逻辑：`airgym/envs/task/planning.py`
-- 环境配置：`airgym/envs/task/planning_config.py`
-- 训练配置：`scripts/config/ppo_planning.yaml`
-- 启动入口：`scripts/runner.py` → `lib/torch_runner.py`
-
-### 3.2 传感器与观测
-
-| 内容 | 位置 | 说明 |
-| --- | --- | --- |
-| 深度相机启用 | `planning_config.py:49-63` | 默认 `enable_onboard_cameras=True`，分辨率 `120×212` |
-| 相机挂载 | `airgym/envs/base/customized.py:170-214` | 每个 env 创建深度相机并缓存为 `full_camera_array` |
-| 渲染频率 | 同上 | `cam_dt=0.04s`，相当于每 4 个物理步刷新一次 |
-| RL 观测 | `planning.py:138-214` | 返回字典：深度图 + 16 维低维状态 |
-
-### 3.3 奖励与 ESDF
-
-- 最近障碍距离由深度图展平取最小值得到：`planning.py:162-164`  
-- 奖励组合：`planning.py:223-307`（包括前进、姿态、平滑度、ESDF 等项）  
-- ESDF 仅用于奖励塑形，未作为额外观测输入；测试模式仍沿用相同逻辑。
-
-### 3.4 配置要点
-
-| 参数 | 位置 | 默认值 |
-| --- | --- | --- |
-| 并行环境数 | `ppo_planning.yaml:65` | `4096`，可根据显存调整 |
-| 输入编码 | `ppo_planning.yaml:31-39` | 默认 CNN；可改用预训练 VAE（注释中提供模板） |
-| Episode 长度 | `planning_config.py:11-23` | 16 秒，10 ms 步长 |
-| 控制模式 | CLI `--ctl_mode` + 配置文件 | 默认 `rate`，影响动作维度与 PID 控制器 |
-
----
-
-## 4. 常见问题
-
-- **深度相机是否在所有 env 中启用？** 是。`enable_onboard_cameras=True` 且 `env_config.use_image=True`。  
-- **ESDF 是否为特权信息？** 否。它直接来源于实时深度图，仅在奖励内部使用。  
-- **如何切换到预训练 VAE 编码器？** 在 `ppo_planning.yaml` 中注释 `cnn`，启用 `vae` 配置并指向 `trained/vae_model.pth`。
-
----
-
-借助上述步骤即可在裸机或 Docker 环境中快速复现 AirGym Planning 任务。***
+### 使用预训练策略测试
+```bash
+python scripts/runner.py --play --task planning_local --ctl_mode rate --num_envs 4 \
+  --checkpoint /workspace/AirGym/runs/ppo_planning_21-07-59-48/nn/ppo_planning.pth
+```
+- 可加 `--headless` 在无图形界面环境中运行。  
+- 该 checkpoint 包含深度 CNN 编码器与 rate 控制策略，可直接复现 README 所述“纯深度输入穿越林区”行为。
