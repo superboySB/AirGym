@@ -38,13 +38,13 @@ TASK_CONFIGS = [
         'task_module': 'task.tracking',
         'task_class': 'Tracking'
     },
-    # {
-    #     'name': 'planning',
-    #     'config_module': 'task.planning_config',
-    #     'config_class': 'PlanningCfg',
-    #     'task_module': 'task.planning',
-    #     'task_class': 'Planning'
-    # },
+    {
+        'name': 'planning',
+        'config_module': 'task.planning_config',
+        'config_class': 'PlanningCfg',
+        'task_module': 'task.planning',
+        'task_class': 'Planning'
+    },
     {
         'name': 'planning_local',
         'config_module': 'task.planning_config',
