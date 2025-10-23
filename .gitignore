@@ -3,7 +3,7 @@ runs/
 .vscode/
 *.npz
 *.pt
-*.tfevents*
+# *.tfevents*
 *.egg-info/
 
 __pycache__

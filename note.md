@@ -45,7 +45,7 @@ python scripts/runner.py --task planning_local --ctl_mode rate --num_envs 512 --
 ### 使用预训练策略测试
 ```bash
 python scripts/runner.py --play --task planning_local --ctl_mode rate --num_envs 4 \
-  --checkpoint /workspace/AirGym/runs/ppo_planning_21-08-45-18/nn/ppo_planning.pth
+  --checkpoint /workspace/AirGym/trained/ppo_planning_vae_30000.pth
 ```
 - 可加 `--headless` 在无图形界面环境中运行。  
 - 该 checkpoint 包含深度 CNN 编码器与 rate 控制策略，可直接复现 README 所述“纯深度输入穿越林区”行为。
