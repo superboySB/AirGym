@@ -24,8 +24,9 @@ from lib.agent.players import A2CPlayer
 def parse_args():
     parser = argparse.ArgumentParser(description="Train depth VAE from AirGym planning observations.")
     parser.add_argument("--num-envs", type=int, default=256, help="Number of parallel envs used for data collection.")
-    parser.add_argument("--collection-steps", type=int, default=200, help="Steps of random rollout used for data collection.")
+    parser.add_argument("--collection-steps", type=int, default=200, help="Steps of policy-driven rollout used for data collection (after any random prefill).")
     parser.add_argument("--max-samples", type=int, default=50000, help="Upper bound on number of depth frames used for training.")
+    parser.add_argument("--random-prefill", type=int, default=0, help="Number of depth frames to collect with pure random actions before using policy (counts toward max-samples).")
     parser.add_argument("--latent-dims", type=int, default=64, help="Latent dimensionality of the VAE.")
     parser.add_argument("--epochs", type=int, default=15, help="Number of epochs to train the VAE.")
     parser.add_argument("--batch-size", type=int, default=256, help="Mini batch size for VAE training.")
@@ -136,6 +137,7 @@ def collect_depth_samples(
     policy_player: Optional[A2CPlayer],
     deterministic_policy: bool,
     policy_random_prob: float,
+    random_prefill: int,
     loop_until_max: bool,
 ) -> torch.Tensor:
     env_info = env.get_env_info()
@@ -157,6 +159,15 @@ def collect_depth_samples(
     steps = 0
     def need_more_samples():
         return sum(t.size(0) for t in collected) < total_needed
+
+    remaining_prefill = max(0, random_prefill)
+    while need_more_samples() and remaining_prefill > 0:
+        rand = torch.rand((num_envs, action_dim), device=rollout_device)
+        actions = action_low.unsqueeze(0) + (action_high - action_low).unsqueeze(0) * rand
+        obs, _, _, _ = env.step(actions)
+        images = obs["image"].detach().to("cpu")
+        collected.append(images)
+        remaining_prefill -= num_envs
 
     while need_more_samples() and (steps < num_steps or loop_until_max):
         steps += 1
@@ -190,6 +201,22 @@ def collect_depth_samples(
     return frames
 
 
+def prepare_images_for_logging(tensor: torch.Tensor, make_rgb: bool = True) -> torch.Tensor:
+    if tensor.dim() == 3:
+        tensor = tensor.unsqueeze(0)
+    tensor = tensor.clone()
+    # stretch each image to full [0,1] range for visualization only
+    b, c, h, w = tensor.shape
+    tensor_flat = tensor.view(b, -1)
+    mins = tensor_flat.min(dim=1, keepdim=True).values
+    maxs = tensor_flat.max(dim=1, keepdim=True).values
+    denom = (maxs - mins).clamp_min(1e-6)
+    tensor = ((tensor_flat - mins) / denom).view_as(tensor)
+    if make_rgb and tensor.size(1) == 1:
+        tensor = tensor.repeat(1, 3, 1, 1)
+    return tensor.clamp(0.0, 1.0).detach().cpu()
+
+
 def train_vae(
     dataset: TensorDataset,
     latent_dims: int,
@@ -217,6 +244,7 @@ def train_vae(
         count = min(visualize_count, len(dataset))
         sample_batch = torch.stack([dataset[i][0] for i in range(count)])
     model.train()
+    warned_nonfinite = False
     for epoch in range(epochs):
         epoch_recon = 0.0
         epoch_kld = 0.0
@@ -234,7 +262,9 @@ def train_vae(
                 kld = -0.5 * torch.mean(1 + logvar - mean.pow(2) - logvar.exp())
                 loss = recon_loss + effective_kl_weight * kld
             if not torch.isfinite(loss):
-                print("[WARN] Skipping batch due to non-finite loss.")
+                if not warned_nonfinite:
+                    print("[WARN] Encountered non-finite loss. Affected batches will be skipped.")
+                    warned_nonfinite = True
                 continue
 
             optimizer.zero_grad()
@@ -367,12 +397,15 @@ def main():
         policy_player,
         args.policy_deterministic,
         args.policy_random_prob,
+        args.random_prefill,
         args.loop_until_max,
     )
     if hasattr(env, "close"):
         env.close()
 
     frames = frames.unsqueeze(1) if frames.dim() == 3 else frames  # ensure (N, C, H, W)
+    frames = torch.nan_to_num(frames, nan=0.0, posinf=0.0, neginf=0.0)
+    frames = frames.clamp(0.0, 1.0)
     dataset = TensorDataset(frames.float())
     print(f"[INFO] Collected {len(dataset)} depth frames for VAE training.")
     if len(dataset) < args.max_samples:
@@ -383,6 +416,10 @@ def main():
 
     train_device = torch.device(args.rl_device)
     writer = SummaryWriter(log_dir)
+    writer.add_scalar("dataset/min", frames.min().item(), 0)
+    writer.add_scalar("dataset/max", frames.max().item(), 0)
+    writer.add_scalar("dataset/mean", frames.mean().item(), 0)
+    writer.add_histogram("dataset/depth_hist", frames.view(-1), 0)
     train_vae(
         dataset,
         args.latent_dims,

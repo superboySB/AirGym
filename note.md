@@ -45,7 +45,7 @@ python scripts/runner.py --task planning_local --ctl_mode rate --num_envs 512 --
 ### 使用预训练策略测试
 ```bash
 python scripts/runner.py --play --task planning_local --ctl_mode rate --num_envs 4 \
-  --checkpoint /workspace/AirGym/trained/ppo_planning_vae_30000.pth
+  --checkpoint /workspace/AirGym/trained/20251022/ppo_planning_vae_30000.pth
 ```
 - 可加 `--headless` 在无图形界面环境中运行。  
 - 该 checkpoint 包含深度 CNN 编码器与 rate 控制策略，可直接复现 README 所述“纯深度输入穿越林区”行为。
@@ -59,27 +59,27 @@ python scripts/runner.py --play --task planning_local --ctl_mode rate --num_envs
 python scripts/train_depth_vae.py \
   --num-envs 9 \
   --collection-steps 2500 \
+  --random-prefill 20000 \
   --loop-until-max \
-  --max-samples 20000 \
-  --epochs 30 \
-  --batch-size 512 \
+  --max-samples 60000 \
+  --epochs 80 \
+  --batch-size 768 \
   --latent-dims 64 \
   --headless \
   --sim-device cuda:0 \
   --rl-device cuda:0 \
   --policy-config scripts/config/ppo_planning_local.yaml \
   --policy-checkpoint trained/planning_cnn_rate.pth \
-  --policy-random-prob 0.2 \
-  --kl-weight 1.0 \
-  --kl-warmup-epochs 10 \
-  --tb-logdir runs/vae_planning \
+  --policy-random-prob 0.4 \
+  --kl-weight 5.0 \
+  --kl-warmup-epochs 5 \
   --visualize-interval 5 \
   --visualize-count 6 \
   --max-grad-norm 5.0 \
-  --lr 5e-4
+  --lr 3e-4
 ```
-- `--loop-until-max` 会在到达 `max-samples` 之前持续 rollout；可通过 `--policy-random-prob` 设定一定比例的随机动作以增加样本多样性（设为 0 表示只用策略动作，默认 0.0）。
-- 运行时脚本会提示当前是否加载策略；采样得到的深度帧会被规范化到 `(1,120,212)`。采集不足时命令行会提示需要补采样的步数。
-- `--kl-warmup-epochs` 用于线性升温 KL 权重，避免潜变量坍缩；如需关闭混合精度可加 `--no-amp`。
-- `visualize-interval/count` 会在 TensorBoard 中输出原始与重建深度图，可直观检查模型效果；其它曲线仍提供重建、KL、总 loss。
+- `--random-prefill` 会先生成一批完全随机的深度帧，配合 `--loop-until-max` 可确保收集到设定数量；`--policy-random-prob` 再在策略阶段引入随机动作提升多样性。
+- 运行时脚本会提示当前是否加载策略；采样得到的深度帧会被规范化到 `(1,120,212)`（并自动去除 NaN/Inf）。采集不足时命令行会提示需要补采样的步数，同时 `dataset/*` 指标会被写入 TensorBoard 以核对深度分布。
+- `--kl-warmup-epochs` 用于线性升温 KL 权重，避免潜变量坍缩；如需关闭混合精度可加 `--no-amp`。训练日志还会输出 `latent_mean_abs`、`latent_var` 便于监控潜变量是否退化。
+- `visualize-interval/count` 会在 TensorBoard 的 Images 标签页生成彩色的原始与重建深度图（单通道复制到 3 通道），方便检查重建质量。
 - 若要替换原模型，只需把 `scripts/config/ppo_planning_*.yaml` 中 `network.vae.model_file` 指向生成的 `nn/vae_model.pth`（或自定义输出路径）。
