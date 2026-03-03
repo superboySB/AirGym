@@ -201,6 +201,62 @@ class BasePlayer(object):
     def reset(self):
         raise NotImplementedError('raise')
 
+    def _extract_info_flag(self, info, key, batch_size):
+        if not isinstance(info, dict):
+            return torch.zeros(batch_size, dtype=torch.bool)
+
+        value = info.get(key, None)
+        if value is None:
+            return torch.zeros(batch_size, dtype=torch.bool)
+
+        if isinstance(value, torch.Tensor):
+            flag = value.detach().cpu().reshape(-1).bool()
+        elif isinstance(value, np.ndarray):
+            flag = torch.from_numpy(value).reshape(-1).bool()
+        elif isinstance(value, (list, tuple)):
+            flag = torch.as_tensor(value).reshape(-1).bool()
+        else:
+            flag = torch.full((batch_size,), bool(value), dtype=torch.bool)
+
+        if flag.numel() == 0:
+            return torch.zeros(batch_size, dtype=torch.bool)
+        if flag.numel() == 1 and batch_size > 1:
+            flag = flag.repeat(batch_size)
+        if flag.numel() < batch_size:
+            pad = torch.zeros(batch_size - flag.numel(), dtype=torch.bool)
+            flag = torch.cat((flag, pad), dim=0)
+        if flag.numel() > batch_size:
+            flag = flag[:batch_size]
+        return flag
+
+    def _extract_info_float(self, info, key, batch_size):
+        if not isinstance(info, dict):
+            return torch.full((batch_size,), float('nan'), dtype=torch.float32)
+
+        value = info.get(key, None)
+        if value is None:
+            return torch.full((batch_size,), float('nan'), dtype=torch.float32)
+
+        if isinstance(value, torch.Tensor):
+            out = value.detach().cpu().reshape(-1).to(dtype=torch.float32)
+        elif isinstance(value, np.ndarray):
+            out = torch.from_numpy(value).reshape(-1).to(dtype=torch.float32)
+        elif isinstance(value, (list, tuple)):
+            out = torch.as_tensor(value, dtype=torch.float32).reshape(-1)
+        else:
+            out = torch.full((batch_size,), float(value), dtype=torch.float32)
+
+        if out.numel() == 0:
+            return torch.full((batch_size,), float('nan'), dtype=torch.float32)
+        if out.numel() == 1 and batch_size > 1:
+            out = out.repeat(batch_size)
+        if out.numel() < batch_size:
+            pad = torch.full((batch_size - out.numel(),), float('nan'), dtype=torch.float32)
+            out = torch.cat((out, pad), dim=0)
+        if out.numel() > batch_size:
+            out = out[:batch_size]
+        return out
+
     def run(self):
         n_games = self.games_num
         render = self.render_env
@@ -227,7 +283,6 @@ class BasePlayer(object):
 
             cr = torch.zeros(batch_size, dtype=torch.float32)
             steps = torch.zeros(batch_size, dtype=torch.float32)
-
             print_game_res = False
 
             for n in range(self.max_steps):
@@ -241,6 +296,17 @@ class BasePlayer(object):
                 obses, r, done, info = self.env_step(self.env, action)
                 cr += r
                 steps += 1
+                step_collision = self._extract_info_flag(info, 'collision', batch_size)
+                step_goal = self._extract_info_flag(info, 'reach_goal', batch_size)
+                step_timeout = self._extract_info_flag(info, 'time_outs', batch_size)
+                step_height = self._extract_info_flag(info, 'done_height', batch_size)
+                step_oob = self._extract_info_flag(info, 'done_oob', batch_size)
+                step_heading = self._extract_info_flag(info, 'done_heading', batch_size)
+                step_goal_dist = self._extract_info_float(info, 'goal_dist_m', batch_size)
+                step_root_x = self._extract_info_float(info, 'root_x_m', batch_size)
+                step_root_y = self._extract_info_float(info, 'root_y_m', batch_size)
+                step_root_z = self._extract_info_float(info, 'root_z_m', batch_size)
+                step_heading_reward = self._extract_info_float(info, 'heading_reward', batch_size)
 
                 if render:
                     self.env.render(mode='human')
@@ -254,6 +320,20 @@ class BasePlayer(object):
                 if done_count > 0:
                     cur_rewards = cr[done_indices].sum().item()
                     cur_steps = steps[done_indices].sum().item()
+                    done_collision = int(step_collision[done_indices].sum().item())
+                    done_goal = int(step_goal[done_indices].sum().item())
+                    done_timeout = int(step_timeout[done_indices].sum().item())
+                    done_height = int(step_height[done_indices].sum().item())
+                    done_oob = int(step_oob[done_indices].sum().item())
+                    done_heading = int(step_heading[done_indices].sum().item())
+                    done_known = torch.logical_or(
+                        torch.logical_or(
+                            torch.logical_or(step_collision, step_goal),
+                            torch.logical_or(step_timeout, step_height),
+                        ),
+                        torch.logical_or(step_oob, step_heading),
+                    )
+                    done_unknown = done_count - int(done_known[done_indices].sum().item())
 
                     cr = cr * (1.0 - done.float())
                     steps = steps * (1.0 - done.float())
@@ -270,6 +350,55 @@ class BasePlayer(object):
                             game_res = info.get('scores', 0.5)
 
                     if self.print_stats:
+                        print(
+                            f'event: done={done_count} goal={done_goal} collision={done_collision} '
+                            f'timeout={done_timeout} height={done_height} oob={done_oob} '
+                            f'heading={done_heading} unknown={done_unknown}'
+                        )
+                        if done_count == 1:
+                            done_env_idx = int(done_indices[0].item())
+                            goal_dist = float(step_goal_dist[done_env_idx].item())
+                            root_x = float(step_root_x[done_env_idx].item())
+                            root_y = float(step_root_y[done_env_idx].item())
+                            root_z = float(step_root_z[done_env_idx].item())
+                            heading_reward_val = float(step_heading_reward[done_env_idx].item())
+
+                            def fmt(v):
+                                return "N/A" if not np.isfinite(v) else f"{v:.6f}"
+
+                            reason_names = []
+                            if done_goal > 0:
+                                reason_names.append('goal')
+                                print(f"event_reason: 达到目标，目标距离={fmt(goal_dist)} m，小于 0.5 m。")
+                            if done_collision > 0:
+                                reason_names.append('collision')
+                                print("event_reason: 发生碰撞，至少一个无人机刚体链接的接触力范数 > 0.1。")
+                            if done_timeout > 0:
+                                reason_names.append('timeout')
+                                print("event_reason: 超时结束，达到最大回合步数上限。")
+                            if done_height > 0:
+                                reason_names.append('height')
+                                print(
+                                    f"event_reason: 高度越界，当前 z={fmt(root_z)} m，"
+                                    "安全范围是 [1.2, 1.8] m。"
+                                )
+                            if done_oob > 0:
+                                reason_names.append('oob')
+                                print(
+                                    f"event_reason: 平面越界，当前 x={fmt(root_x)} m, y={fmt(root_y)} m，"
+                                    "应满足 x∈[-8.5, 8.5], y∈[-4.0, 4.0]。"
+                                )
+                            if done_heading > 0:
+                                reason_names.append('heading')
+                                print(
+                                    f"event_reason: 航向约束不满足，heading_reward={fmt(heading_reward_val)}，"
+                                    "阈值是 0.25。"
+                                )
+                            if done_unknown > 0 or len(reason_names) == 0:
+                                reason_names.append('unknown')
+                                print("event_reason: 触发了未标注的结束条件（unknown）。")
+                        if done_collision > 0:
+                            print('event: collision detected')
                         cur_rewards_done = cur_rewards/done_count
                         cur_steps_done = cur_steps/done_count
                         if print_game_res:
@@ -379,7 +508,7 @@ class A2CPlayer(BasePlayer):
 
     def set_full_state_weights(self, checkpoint):
         weights = checkpoint
-        print(weights['model'].keys())
+        print(f"Checkpoint model tensors: {len(weights['model'])}")
         try:
             self.model.load_state_dict(weights['model'])
         except:
@@ -431,4 +560,3 @@ class A2CPlayer(BasePlayer):
 
     def reset(self):
         pass
-

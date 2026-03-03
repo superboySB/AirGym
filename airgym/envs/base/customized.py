@@ -61,6 +61,7 @@ class Customized(BaseTask):
         env_boundary_count = self.asset_manager.get_env_boundary_count() # Number of env boundaries in the environment
         self.num_assets = num_env_assets - env_boundary_count # # Number of env assets that can be randomly placed
         bodies_per_env = env_asset_link_count + robot_num_bodies
+        self.robot_num_bodies = robot_num_bodies
         
         self.vec_root_tensor = gymtorch.wrap_tensor(
             self.root_tensor).view(self.num_envs, num_actors, 13)
@@ -135,7 +136,9 @@ class Customized(BaseTask):
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device)
         self.pre_actions = torch.zeros((self.num_envs, self.num_actions), device=self.device)
 
-        self.contact_forces = gymtorch.wrap_tensor(self.contact_force_tensor).view(self.num_envs, bodies_per_env, 3)[:, 0]
+        self.body_contact_forces = gymtorch.wrap_tensor(self.contact_force_tensor).view(self.num_envs, bodies_per_env, 3)
+        # Backward-compatible view: first rigid body contact force.
+        self.contact_forces = self.body_contact_forces[:, 0]
         self.collisions = torch.zeros(self.num_envs, device=self.device)
 
         if self.enable_onboard_cameras:
@@ -394,7 +397,10 @@ class Customized(BaseTask):
         ones = torch.ones((self.num_envs), device=self.device)
         zeros = torch.zeros((self.num_envs), device=self.device)
         self.collisions[:] = 0
-        self.collisions = torch.where(torch.norm(self.contact_forces, dim=-1) > 0.1, ones, zeros)
+        # Collision is triggered if any rigid body of the robot has contact force norm > 0.1.
+        robot_forces = self.body_contact_forces[:, :self.robot_num_bodies, :]
+        robot_force_norm = torch.norm(robot_forces, dim=-1)
+        self.collisions = torch.where(torch.any(robot_force_norm > 0.1, dim=-1), ones, zeros)
 
     def dump_images(self):
         for env_id in range(self.num_envs):

@@ -157,11 +157,28 @@ class Planning(Customized):
 
         self.progress_buf += 1
         self.check_collisions()
+        step_collision = self.collisions > 0
         self.compute_observations()
 
         flattened_array = self.full_camera_array.clone().view(self.full_camera_array.size(0), -1)
         self.esdf_dist = torch.min(flattened_array, dim=1, keepdim=False).values
         self.compute_reward()
+        step_goal_dist = self.related_dist.clone()
+        step_root_x = self.root_positions[..., 0].clone()
+        step_root_y = self.root_positions[..., 1].clone()
+        step_root_z = self.root_positions[..., 2].clone()
+        step_heading_reward_value = self.item_reward_info["heading_reward"].clone()
+        step_reach_goal = self.item_reward_info["reach_goal_reward"] > 0
+        step_time_out = self.progress_buf >= self.max_episode_length - 1
+        step_height = torch.logical_or(
+            self.root_positions[..., 2] < FLY_HEIGHT - 0.3,
+            self.root_positions[..., 2] > FLY_HEIGHT + 0.3,
+        )
+        step_oob = torch.logical_or(
+            torch.logical_or(self.root_positions[..., 0] < -LENGTH - 0.5, self.root_positions[..., 0] > LENGTH + 0.5),
+            torch.logical_or(self.root_positions[..., 1] < -WIDTH, self.root_positions[..., 1] > WIDTH),
+        )
+        step_heading = self.item_reward_info["heading_reward"] < 0.25
 
         if self.cfg.env.reset_on_collision:
             ones = torch.ones_like(self.reset_buf)
@@ -171,9 +188,19 @@ class Planning(Customized):
         if len(reset_env_ids) > 0:
             self.reset_idx(reset_env_ids)
 
-        self.time_out_buf = self.progress_buf > self.max_episode_length
+        self.time_out_buf = step_time_out
         self.extras["time_outs"] = self.time_out_buf
         self.extras["item_reward_info"] = self.item_reward_info
+        self.extras["collision"] = step_collision
+        self.extras["reach_goal"] = step_reach_goal
+        self.extras["done_height"] = step_height
+        self.extras["done_oob"] = step_oob
+        self.extras["done_heading"] = step_heading
+        self.extras["goal_dist_m"] = step_goal_dist
+        self.extras["root_x_m"] = step_root_x
+        self.extras["root_y_m"] = step_root_y
+        self.extras["root_z_m"] = step_root_z
+        self.extras["heading_reward"] = step_heading_reward_value
 
         obs = {
             'image': self.full_camera_array,
@@ -251,7 +278,7 @@ class Planning(Customized):
         alive_reward = torch.where(self.esdf_dist > 0.3, torch.tensor(0.0), torch.tensor(-1.0)).squeeze(-1)
 
         # reach goal
-        reach_goal = self.related_dist < 0.3
+        reach_goal = self.related_dist < 0.5
         # reach_goal_reward = torch.where(reach_goal, torch.tensor(20.0), torch.tensor(0.0))
         reach_goal_reward = torch.where(reach_goal, torch.tensor(200.0), torch.tensor(0.0))
 

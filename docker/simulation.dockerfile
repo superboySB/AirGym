@@ -54,7 +54,7 @@ RUN pip install \
     torchaudio==2.0.0 \
     --index-url https://download.pytorch.org/whl/cu118
 
-RUN pip install pytorch3d
+RUN pip install pytorch3d huggingface_hub omegaconf
 
 # NVIDIA ICD overrides (from official docker)
 RUN rm -f /usr/lib/x86_64-linux-gnu/libEGL_mesa.so.0 /usr/lib/x86_64-linux-gnu/libEGL_mesa.so.0.0.0 /usr/share/glvnd/egl_vendor.d/50_mesa.json || true
@@ -68,10 +68,8 @@ RUN git clone https://github.com/emNavi/rlPx4Controller.git
 RUN pip install pybind11 && \
     pip install -e /workspace/rlPx4Controller
 
-# AirGym (Step 6)
-COPY . /workspace/AirGym
-RUN pip install usd-core rospkg matplotlib opencv-python tensorboardX && \
-    pip install -e /workspace/AirGym
+# AirGym runtime dependencies (Step 6)
+RUN pip install usd-core rospkg matplotlib opencv-python tensorboardX
 
 # Isaac Gym (Step 7)
 ARG ISAACGYM_DOWNLOAD_URL=https://developer.nvidia.com/isaac-gym-preview-4
@@ -86,6 +84,7 @@ RUN mkdir -p /opt/isaacgym && \
 ENV ISAACGYM_ROOT_DIR=/opt/isaacgym \
     PYTHONPATH=/opt/isaacgym/python:${PYTHONPATH}
 
+RUN mkdir -p /workspace/AirGym
 WORKDIR /workspace/AirGym
 
 # TODO： 减小本地化size
