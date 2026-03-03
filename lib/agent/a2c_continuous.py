@@ -229,17 +229,20 @@ class ContinuousA2CBase(A2CBase):
                     self.mean_rewards = mean_rewards[0]
 
                     for i in range(self.value_size):
-                        rewards_name = 'rewards' if i == 0 else 'rewards{0}'.format(i)
-                        self.writer.add_scalar(rewards_name + '/step'.format(i), mean_rewards[i], frame)
-                        self.writer.add_scalar(rewards_name + '/iter'.format(i), mean_rewards[i], epoch_num)
-                        self.writer.add_scalar(rewards_name + '/time'.format(i), mean_rewards[i], total_time)
-                        self.writer.add_scalar('shaped_' + rewards_name + '/step'.format(i), mean_shaped_rewards[i], frame)
-                        self.writer.add_scalar('shaped_' + rewards_name + '/iter'.format(i), mean_shaped_rewards[i], epoch_num)
-                        self.writer.add_scalar('shaped_' + rewards_name + '/time'.format(i), mean_shaped_rewards[i], total_time)
+                        reward_tag = 'episode/reward' if i == 0 else f'episode/reward_{i}'
+                        shaped_reward_tag = 'episode/shaped_reward' if i == 0 else f'episode/shaped_reward_{i}'
+                        self.writer.add_scalar(f'{reward_tag}/frame', mean_rewards[i], frame)
+                        self.writer.add_scalar(f'{shaped_reward_tag}/frame', mean_shaped_rewards[i], frame)
+                        if not self.tb_compact:
+                            self.writer.add_scalar(f'{reward_tag}/iter', mean_rewards[i], epoch_num)
+                            self.writer.add_scalar(f'{reward_tag}/time', mean_rewards[i], total_time)
+                            self.writer.add_scalar(f'{shaped_reward_tag}/iter', mean_shaped_rewards[i], epoch_num)
+                            self.writer.add_scalar(f'{shaped_reward_tag}/time', mean_shaped_rewards[i], total_time)
 
-                    self.writer.add_scalar('episode_lengths/step', mean_lengths, frame)
-                    self.writer.add_scalar('episode_lengths/iter', mean_lengths, epoch_num)
-                    self.writer.add_scalar('episode_lengths/time', mean_lengths, total_time)
+                    self.writer.add_scalar('episode/length/frame', mean_lengths, frame)
+                    if not self.tb_compact:
+                        self.writer.add_scalar('episode/length/iter', mean_lengths, epoch_num)
+                        self.writer.add_scalar('episode/length/time', mean_lengths, total_time)
 
                     if self.has_self_play_config:
                         self.self_play_manager.update(self)
@@ -473,4 +476,3 @@ class A2CAgent(ContinuousA2CBase):
 
 
     
-

@@ -26,7 +26,8 @@ class DeFMImageEncoder(nn.Module):
 
         self.output_dim = int(getattr(config, "output_dim"))
         self.model_name = str(getattr(config, "model_name", "vit_s14")).lower()
-        self.freeze_backbone = bool(getattr(config, "freeze_backbone", True))
+        self.freeze_encoder = bool(getattr(config, "freeze_encoder", False))
+        self.freeze_backbone = bool(getattr(config, "freeze_backbone", True)) or self.freeze_encoder
         self.max_depth_c1 = float(getattr(config, "max_depth_c1", 100.0))
         self.max_depth_c2 = float(getattr(config, "max_depth_c2", 9.0))
         self.depth_scale_m = float(getattr(config, "depth_scale_m", 4.5))
@@ -35,6 +36,7 @@ class DeFMImageEncoder(nn.Module):
         patch_size = int(getattr(config, "patch_size", 14))
         self.patch_size = patch_size
         self.target_size = self._parse_target_size(getattr(config, "target_size", [224, 224]))
+        self.model_img_size = self._parse_target_size(getattr(config, "model_img_size", self.target_size))
 
         self.include_class_token = bool(getattr(config, "include_class_token", True))
         self.include_spatial_pool = bool(getattr(config, "include_spatial_pool", True))
@@ -47,9 +49,16 @@ class DeFMImageEncoder(nn.Module):
         if self.model_name not in {"vit_s14", "defm_vit_s14"}:
             raise ValueError(f"Unsupported DeFM model_name: {self.model_name}")
 
-        self.backbone = build_defm_vit_s14(img_size=self.target_size)
+        # Keep model image size configurable so checkpoints trained at 224x224
+        # can still be loaded when runtime preprocessing uses a smaller target_size.
+        self.backbone = build_defm_vit_s14(img_size=self.model_img_size)
 
         weight_file_path = os.path.join(config.model_folder, config.model_file)
+        if not os.path.isfile(weight_file_path):
+            raise FileNotFoundError(
+                f"DeFM pretrained checkpoint not found: {weight_file_path}. "
+                "Please provide a valid pretrained model_file."
+            )
         print("Loading DeFM weights from file:", weight_file_path)
         msg = load_defm_weights(self.backbone, weight_file_path, strict=True)
         print("Loaded DeFM weights:", msg)
@@ -78,6 +87,11 @@ class DeFMImageEncoder(nn.Module):
             self.projector = nn.Linear(fused_dim, self.output_dim)
 
         self.output_norm = nn.LayerNorm(self.output_dim)
+        if self.freeze_encoder:
+            self.projector.eval()
+            self.output_norm.eval()
+            self.projector.requires_grad_(False)
+            self.output_norm.requires_grad_(False)
 
     @staticmethod
     def _parse_target_size(target_size) -> tuple:
@@ -92,6 +106,9 @@ class DeFMImageEncoder(nn.Module):
         if self.freeze_backbone:
             # Keep the pretrained backbone in eval mode even when PPO model is in train mode.
             self.backbone.eval()
+        if self.freeze_encoder:
+            self.projector.eval()
+            self.output_norm.eval()
         return self
 
     def encode(self, image_tensors: torch.Tensor) -> torch.Tensor:
@@ -105,7 +122,7 @@ class DeFMImageEncoder(nn.Module):
             interpolation_mode=self.interpolation_mode,
         )
 
-        ctx = torch.no_grad() if self.freeze_backbone else contextlib.nullcontext()
+        ctx = torch.no_grad() if (self.freeze_backbone or self.freeze_encoder) else contextlib.nullcontext()
         with ctx:
             layer_outputs = self.backbone.get_intermediate_layers(
                 processed,
@@ -135,8 +152,10 @@ class DeFMImageEncoder(nn.Module):
         else:
             raise ValueError(f"Unsupported layer_aggregation: {self.layer_aggregation}")
 
-        out = self.projector(fused)
-        out = self.output_norm(out)
+        head_ctx = torch.no_grad() if self.freeze_encoder else contextlib.nullcontext()
+        with head_ctx:
+            out = self.projector(fused)
+            out = self.output_norm(out)
         return out
 
     def forward(self, image_tensors: torch.Tensor) -> torch.Tensor:

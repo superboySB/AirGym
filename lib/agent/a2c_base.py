@@ -156,6 +156,9 @@ class A2CBase(BaseAlgorithm):
         self.save_best_after = config.get('save_best_after', 100)
         self.print_stats = config.get('print_stats', True)
         self.name = base_name
+        self.tb_log_mode = str(config.get('tb_log_mode', 'compact')).lower()
+        self.tb_compact = self.tb_log_mode != 'full'
+        self.inference_amp = bool(config.get('inference_amp', False))
 
         self.ppo = config.get('ppo', True)
         self.max_epochs = self.config.get('max_epochs', -1)
@@ -318,12 +321,17 @@ class A2CBase(BaseAlgorithm):
     def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, a_losses, c_losses, entropies, kls, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames):
         # do we need scaled time?
         self.diagnostics.send_info(self.writer)
-        self.writer.add_scalar('performance/step_inference_rl_update_fps', curr_frames / scaled_time, frame)
-        self.writer.add_scalar('performance/step_inference_fps', curr_frames / scaled_play_time, frame)
-        self.writer.add_scalar('performance/step_fps', curr_frames / step_time, frame)
-        self.writer.add_scalar('performance/rl_update_time', update_time, frame)
-        self.writer.add_scalar('performance/step_inference_time', play_time, frame)
-        self.writer.add_scalar('performance/step_time', step_time, frame)
+        if self.tb_compact:
+            self.writer.add_scalar('performance/total_fps', curr_frames / scaled_time, frame)
+            self.writer.add_scalar('performance/policy_fps', curr_frames / scaled_play_time, frame)
+            self.writer.add_scalar('performance/rl_update_time', update_time, frame)
+        else:
+            self.writer.add_scalar('performance/step_inference_rl_update_fps', curr_frames / scaled_time, frame)
+            self.writer.add_scalar('performance/step_inference_fps', curr_frames / scaled_play_time, frame)
+            self.writer.add_scalar('performance/step_fps', curr_frames / step_time, frame)
+            self.writer.add_scalar('performance/rl_update_time', update_time, frame)
+            self.writer.add_scalar('performance/step_inference_time', play_time, frame)
+            self.writer.add_scalar('performance/step_time', step_time, frame)
         self.writer.add_scalar('losses/a_loss', torch_ext.mean_list(a_losses).item(), frame)
         self.writer.add_scalar('losses/c_loss', torch_ext.mean_list(c_losses).item(), frame)
 
@@ -364,7 +372,8 @@ class A2CBase(BaseAlgorithm):
         }
 
         with torch.no_grad():
-            res_dict = self.model(input_dict)
+            with torch.cuda.amp.autocast(enabled=self.inference_amp):
+                res_dict = self.model(input_dict)
 
         return res_dict
 
@@ -377,7 +386,8 @@ class A2CBase(BaseAlgorithm):
                 'prev_actions': None, 
                 'obs' : processed_obs,
             }
-            result = self.model(input_dict)
+            with torch.cuda.amp.autocast(enabled=self.inference_amp):
+                result = self.model(input_dict)
             value = result['values']
             return value
 

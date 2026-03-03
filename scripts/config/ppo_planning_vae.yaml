@@ -28,22 +28,23 @@ params:
       initializer:
         name: default
         scale: 2
-    cnn:
-      output_dim: 30
-    # vae:
-    #   latent_dims: 64
-    #   model_folder: "/home/kjaebye/isaac/AirGym/trained" # path to your trained model directory
-    #   model_file: "vae_model.pth"
-    #   image_res: [120, 212]
-    #   interpolation_mode: "bilinear"
-    #   return_sampled_latent: False
+    # cnn:
+    #   output_dim: 30
+    vae:
+      latent_dims: 64
+      model_folder: "/workspace/AirGym/trained" # path to your trained model directory
+      model_file: "vae_model.pth"
+      freeze_encoder: True
+      image_res: [120, 212]
+      interpolation_mode: "bilinear"
+      return_sampled_latent: False
 
   config:
-    env_name: planning
+    env_name: planning_vae
     env_config:
       use_image: True
     
-    name: ppo_planning
+    name: ppo_planning_vae
     reward_shaper:
       # min_val: -1
       scale_value: 0.1
@@ -62,19 +63,22 @@ params:
     truncate_grads: True
     e_clip: 0.2
     clip_value: False
-    num_actors: 4096 #4096
+    num_actors: 4096 # 4096
     horizon_length: 24
-    minibatch_size: 2048  #2048
+    minibatch_size: 1024  #2048
     mini_epochs: 5
     critic_coef: 2
     normalize_input: True
     bounds_loss_coef: 0.0001
-    max_epochs: 10000 #10000
+    max_epochs: 30000 # 10000
     normalize_value: True
     use_diagnostics: True
     value_bootstrap: True
     #weight_decay: 0.0001
     use_smooth_clamp: False
+    tb_log_mode: compact
+    tb_log_direct_info: False
+    tb_episode_info_keys: [reward, forward_reward, reach_goal_reward, terminal_penalty]
 
     save_frequency: 20
 

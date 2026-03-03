@@ -22,14 +22,23 @@ class VAEImageEncoder:
     def __init__(self, config, device="cuda:0"):
         self.config = config
         self.latent_dim = self.config.latent_dims
+        self.freeze_encoder = bool(getattr(self.config, "freeze_encoder", True))
         self.vae_model = VAE(input_dim=1, latent_dim=self.config.latent_dims).to(device)
         # combine module path with model file name
         weight_file_path = os.path.join(self.config.model_folder, self.config.model_file)
+        if not os.path.isfile(weight_file_path):
+            raise FileNotFoundError(
+                f"VAE pretrained checkpoint not found: {weight_file_path}. "
+                "Please provide a valid pretrained model_file."
+            )
         # load model weights
         print("Loading weights from file: ", weight_file_path)
-        state_dict = clean_state_dict(torch.load(weight_file_path))
+        state_dict = clean_state_dict(torch.load(weight_file_path, map_location=device))
         self.vae_model.load_state_dict(state_dict)
         self.vae_model.eval()
+        self.vae_model.requires_grad_(False)
+        if not self.freeze_encoder:
+            print("Warning: VAEImageEncoder currently runs in frozen mode; ignoring freeze_encoder=False.")
 
     def encode(self, image_tensors):
         """

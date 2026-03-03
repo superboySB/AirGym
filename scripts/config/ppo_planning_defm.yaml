@@ -1,11 +1,11 @@
-params:  
+params:
   # seed: 8
   algo:
     name: a2c_continuous
 
   model:
     name: continuous_a2c_logstd
-  
+
   load_checkpoint: False
 
   network:
@@ -22,30 +22,39 @@ params:
           val: 0
         fixed_sigma: True
     mlp:
-      units: [64,128,64] #[64,128,64]
+      units: [64, 128, 64]
       d2rl: False
       activation: elu
       initializer:
         name: default
         scale: 2
-    # cnn:
-    #   output_dim: 30
-    vae:
-      latent_dims: 64
-      model_folder: "/workspace/AirGym/trained" # path to your trained model directory
-      model_file: "vae_model.pth"
-      image_res: [120, 212]
+    defm:
+      model_name: "vit_s14"
+      model_folder: "/workspace/AirGym/trained"
+      model_file: "defm_vit_s14.pth"
+      output_dim: 96
+      target_size: [196, 196]
+      model_img_size: [224, 224]
+      patch_size: 14
+      freeze_encoder: True
+      freeze_backbone: True
+      intermediate_layers: 1
+      layer_aggregation: "last"
+      include_class_token: False
+      include_spatial_pool: True
+      projector_hidden_dim: 128
+      max_depth_c1: 100.0
+      max_depth_c2: 9.0
+      depth_scale_m: 4.5
       interpolation_mode: "bilinear"
-      return_sampled_latent: False
 
   config:
-    env_name: planning
+    env_name: planning_defm
     env_config:
       use_image: True
-    
-    name: ppo_planning
+
+    name: ppo_planning_defm
     reward_shaper:
-      # min_val: -1
       scale_value: 0.1
 
     normalize_advantage: True
@@ -62,24 +71,27 @@ params:
     truncate_grads: True
     e_clip: 0.2
     clip_value: False
-    num_actors: 4096 # 4096
+    num_actors: 512
     horizon_length: 24
-    minibatch_size: 1024  #2048
-    mini_epochs: 5
+    minibatch_size: 512
+    mini_epochs: 4
     critic_coef: 2
     normalize_input: True
     bounds_loss_coef: 0.0001
-    max_epochs: 30000 # 10000
+    max_epochs: 30000
     normalize_value: True
     use_diagnostics: True
     value_bootstrap: True
-    #weight_decay: 0.0001
     use_smooth_clamp: False
+    mixed_precision: True
+    inference_amp: True
+    tb_log_mode: compact
+    tb_log_direct_info: False
+    tb_episode_info_keys: [reward, forward_reward, reach_goal_reward, terminal_penalty]
 
     save_frequency: 20
 
     player:
-      # render: True
       deterministic: True
       games_num: 100000
       use_vecenv: True

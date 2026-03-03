@@ -11,6 +11,19 @@ LENGTH = 8.0
 WIDTH = 4.0
 FLY_HEIGHT = 1.5 #1.0
 
+X_BOUND = LENGTH + 0.5
+Y_BOUND = WIDTH
+OOB_EPS = 1e-3
+RESET_X_INSET = 0.1
+GOAL_X_INSET = 0.1
+NORM_EPS = 1e-6
+
+# Terminal penalties to explicitly discourage unsafe endings.
+TERM_PENALTY_OOB = -150.0
+TERM_PENALTY_HEIGHT = -120.0
+TERM_PENALTY_HEADING = -80.0
+TERM_PENALTY_COLLISION = -200.0
+
 def quaternion_conjugate(q: torch.Tensor):
     """Compute the conjugate of a quaternion."""
     q_conj = q.clone()
@@ -74,12 +87,12 @@ class Planning(Customized):
         self.env_asset_root_states[env_ids, :, 3:7] = assets_root_quats[:, :, [1, 2, 3, 0]]
 
         # randomize goal states
-        self.goal_states[env_ids, 0:1] = torch.tensor([LENGTH+0.5], device=self.device)
+        self.goal_states[env_ids, 0:1] = torch.tensor([X_BOUND - GOAL_X_INSET], device=self.device)
         self.goal_states[env_ids, 1:2] = 1.5 * torch_rand_float(-1.0, 1.0, (num_resets, 1), self.device) + torch.tensor([0.], device=self.device)
         self.goal_states[env_ids, 2:3] = .0 * torch_rand_float(-1., 1., (num_resets, 1), self.device) + FLY_HEIGHT
 
         # randomize root states
-        self.root_states[env_ids, 0:2] = torch.tensor([-LENGTH-0.5, 0.], device=self.device)
+        self.root_states[env_ids, 0:2] = torch.tensor([-X_BOUND + RESET_X_INSET, 0.], device=self.device)
         self.root_states[env_ids, 2:3] = .0 *torch_rand_float(-1., 1., (num_resets, 1), self.device) + FLY_HEIGHT
 
         def compute_direction_angle(a, b, degrees=True):
@@ -175,14 +188,16 @@ class Planning(Customized):
             self.root_positions[..., 2] > FLY_HEIGHT + 0.3,
         )
         step_oob = torch.logical_or(
-            torch.logical_or(self.root_positions[..., 0] < -LENGTH - 0.5, self.root_positions[..., 0] > LENGTH + 0.5),
-            torch.logical_or(self.root_positions[..., 1] < -WIDTH, self.root_positions[..., 1] > WIDTH),
+            torch.logical_or(
+                self.root_positions[..., 0] < -X_BOUND - OOB_EPS,
+                self.root_positions[..., 0] > X_BOUND + OOB_EPS,
+            ),
+            torch.logical_or(
+                self.root_positions[..., 1] < -Y_BOUND - OOB_EPS,
+                self.root_positions[..., 1] > Y_BOUND + OOB_EPS,
+            ),
         )
         step_heading = self.item_reward_info["heading_reward"] < 0.25
-
-        if self.cfg.env.reset_on_collision:
-            ones = torch.ones_like(self.reset_buf)
-            self.reset_buf = torch.where(self.collisions > 0, ones, self.reset_buf)
 
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_env_ids) > 0:
@@ -232,7 +247,7 @@ class Planning(Customized):
         self.vel_local = torch.einsum("bij,bj->bi", self.world_to_local, self.root_linvels)
         self.ang_vel_local = torch.einsum("bij,bj->bi", self.world_to_local, self.root_angvels)
 
-        self.goal_dir = self.pos_diff_local / torch.norm(self.pos_diff_local, dim=-1, keepdim=True)
+        self.goal_dir = self.pos_diff_local / (torch.norm(self.pos_diff_local, dim=-1, keepdim=True) + NORM_EPS)
         self.related_dist = torch.norm(forward_global, dim=-1)
         self.obs_buf[..., 0:3] = self.goal_dir
         self.obs_buf[..., 3:6] = self.euler_angles_local
@@ -248,16 +263,17 @@ class Planning(Customized):
         self.pre_root_angvels = self.root_angvels.clone()
 
     def compute_quadcopter_reward(self):
-        # continous actions
+        # smooth action and angular-rate regularization
         action_diff = self.actions - self.pre_actions
-        continous_action_reward =  .2 * torch.norm(self.ang_vel_local, dim=-1) + .2 * torch.norm(action_diff, dim=-1)
+        continous_action_reward = .2 * torch.exp(-torch.norm(action_diff, dim=-1))
+        ang_vel_penalty = -0.05 * torch.norm(self.ang_vel_local, dim=-1)
         thrust_reward = .5 * (1-torch.abs(0.1533 - self.actions[..., -1]))
         
         # guidance reward
         forward_reward = .1 * (torch.norm(self.goal_positions - self.pre_root_positions, dim=-1) - torch.norm(self.goal_positions - self.root_positions, dim=-1))
 
         # heading reward
-        forward_vec = self.pos_diff_local / torch.norm(self.pos_diff_local, dim=-1, keepdim=True)
+        forward_vec = self.pos_diff_local / (torch.norm(self.pos_diff_local, dim=-1, keepdim=True) + NORM_EPS)
         heading_vec = torch.tensor([1.0, 0.0, 0.0]).repeat(self.num_envs, 1).to(self.device)
         heading_reward = torch.sum(forward_vec * heading_vec, dim=-1)
 
@@ -284,6 +300,7 @@ class Planning(Customized):
 
         reward = (
             continous_action_reward
+            + ang_vel_penalty
             + forward_reward
             + alive_reward + esdf_reward
             + ups_reward
@@ -298,28 +315,56 @@ class Planning(Customized):
         ones = torch.ones_like(self.reset_buf)
         die = torch.zeros_like(self.reset_buf)
 
+        done_height = torch.logical_or(
+            self.root_positions[..., 2] < FLY_HEIGHT - 0.3,
+            self.root_positions[..., 2] > FLY_HEIGHT + 0.3,
+        )
+        done_oob = torch.logical_or(
+            torch.logical_or(
+                self.root_positions[..., 0] < -X_BOUND - OOB_EPS,
+                self.root_positions[..., 0] > X_BOUND + OOB_EPS,
+            ),
+            torch.logical_or(
+                self.root_positions[..., 1] < -Y_BOUND - OOB_EPS,
+                self.root_positions[..., 1] > Y_BOUND + OOB_EPS,
+            ),
+        )
+        done_heading = heading_reward < 0.25
+        done_collision = self.collisions > 0
+        done_timeout = self.progress_buf >= self.max_episode_length - 1
+
         # resets due to too low or too high
-        reset = torch.where(self.root_positions[..., 2] < FLY_HEIGHT-0.3, ones, die)
-        reset = torch.where(self.root_positions[..., 2] > FLY_HEIGHT+0.3, ones, reset)
+        reset = torch.where(done_height, ones, die)
 
         # resets out off bound
-        reset = torch.where(self.root_positions[..., 0] < -LENGTH-0.5, ones, reset)
-        reset = torch.where(self.root_positions[..., 0] > LENGTH+0.5, ones, reset)
-        reset = torch.where(self.root_positions[..., 1] < -WIDTH, ones, reset)
-        reset = torch.where(self.root_positions[..., 1] > WIDTH, ones, reset)
+        reset = torch.where(done_oob, ones, reset)
 
         # resets due to collision or reach goal
-        reset = torch.where(self.collisions > 0, ones, reset)
+        if self.cfg.env.reset_on_collision:
+            reset = torch.where(done_collision, ones, reset)
         reset = torch.where(reach_goal, ones, reset)
 
         # resets
-        reset = torch.where(heading_reward < 0.25, ones, reset)
+        reset = torch.where(done_heading, ones, reset)
 
         # resets due to episode length
-        reset = torch.where(self.progress_buf >= self.max_episode_length - 1, ones, reset)
+        reset = torch.where(done_timeout, ones, reset)
+
+        terminal_penalty = torch.zeros_like(reward)
+        terminal_penalty = torch.where(done_oob, terminal_penalty + TERM_PENALTY_OOB, terminal_penalty)
+        terminal_penalty = torch.where(done_height, terminal_penalty + TERM_PENALTY_HEIGHT, terminal_penalty)
+        terminal_penalty = torch.where(done_heading, terminal_penalty + TERM_PENALTY_HEADING, terminal_penalty)
+        if self.cfg.env.reset_on_collision:
+            terminal_penalty = torch.where(
+                done_collision,
+                terminal_penalty + TERM_PENALTY_COLLISION,
+                terminal_penalty,
+            )
+        reward = reward + terminal_penalty
 
         item_reward_info = {}
         item_reward_info["continous_action_reward"] = continous_action_reward
+        item_reward_info["ang_vel_penalty"] = ang_vel_penalty
         item_reward_info["heading_reward"] = heading_reward
         item_reward_info["speed_reward"] = speed_reward
         item_reward_info["forward_reward"] = forward_reward
@@ -329,6 +374,7 @@ class Planning(Customized):
         item_reward_info["esdf_reward"] = esdf_reward
         item_reward_info["thrust_reward"] = thrust_reward
         item_reward_info["reach_goal_reward"] = reach_goal_reward
+        item_reward_info["terminal_penalty"] = terminal_penalty
         item_reward_info["reward"] = reward
         
         return reward, reset, item_reward_info

@@ -38,36 +38,23 @@ TASK_CONFIGS = [
         'task_module': 'task.tracking',
         'task_class': 'Tracking'
     },
+    # Clear method-based aliases for planning variants.
     {
-        'name': 'planning',
+        'name': 'planning_cnn',
         'config_module': 'task.planning_config',
         'config_class': 'PlanningCfg',
         'task_module': 'task.planning',
         'task_class': 'Planning'
     },
     {
-        'name': 'planning_local',
+        'name': 'planning_vae',
         'config_module': 'task.planning_config',
         'config_class': 'PlanningCfg',
         'task_module': 'task.planning',
         'task_class': 'Planning'
     },
     {
-        'name': 'planning_server',
-        'config_module': 'task.planning_config',
-        'config_class': 'PlanningCfg',
-        'task_module': 'task.planning',
-        'task_class': 'Planning'
-    },
-    {
-        'name': 'planning_vit_local',
-        'config_module': 'task.planning_config',
-        'config_class': 'PlanningCfg',
-        'task_module': 'task.planning',
-        'task_class': 'Planning'
-    },
-    {
-        'name': 'planning_vit_server',
+        'name': 'planning_defm',
         'config_module': 'task.planning_config',
         'config_class': 'PlanningCfg',
         'task_module': 'task.planning',

@@ -43,30 +43,30 @@ python scripts/example.py --task hovering --ctl_mode rate --num_envs 4
 ### 方法A：端到端 CNN + Rate Control
 训练（从头学视觉+控制）
 ```bash
-python scripts/runner.py --task planning_server --ctl_mode rate --num_envs 256 --headless
+python scripts/runner.py --task planning_cnn --ctl_mode rate --num_envs 256 --headless
 # 服务器大规模训练可用：--num_envs 2048
 ```
 测试（单环境）
 ```bash
-python -u scripts/runner.py --play --task planning_server --ctl_mode rate --num_envs 1 \
+python -u scripts/runner.py --play --task planning_cnn --ctl_mode rate --num_envs 1 \
   --checkpoint /workspace/AirGym/trained/planning_cnn_rate.pth
 ```
 
 ### 方法B：预训练 VAE + Rate Control
 训练（冻结预训练 VAE，仅训练 RL 策略）
 ```bash
-python scripts/runner.py --task planning_local --ctl_mode rate --num_envs 256 --headless
+python scripts/runner.py --task planning_vae --ctl_mode rate --num_envs 256 --headless
 # 服务器可提高并行环境数，例如 --num_envs 512
 ```
 测试（单环境）
 ```bash
-python -u scripts/runner.py --play --task planning_local --ctl_mode rate --num_envs 1 \
+python -u scripts/runner.py --play --task planning_vae --ctl_mode rate --num_envs 1 \
   --checkpoint /workspace/AirGym/trained/20251022/ppo_planning_vae_30000.pth
 ```
 
 ### 方法C：预训练 DeFM ViT-S/14 + Rate Control
 - 已引入 DeFM ViT-S/14 关键源码并接入现有 Isaac Gym PPO：`lib/network/defm_vit.py`、`lib/network/defm_preprocess.py`、`lib/network/defm_image_encoder.py`。
-- 新增任务/配置：`planning_vit_local`、`planning_vit_server`，`scripts/config/ppo_planning_vit_local.yaml`、`scripts/config/ppo_planning_vit_server.yaml`。
+- 新增任务/配置：`planning_defm`，`scripts/config/ppo_planning_defm.yaml`。
 - 下载权重（一次即可）：
 ```bash
 wget -O /workspace/AirGym/trained/defm_vit_s14.pth \
@@ -74,13 +74,13 @@ wget -O /workspace/AirGym/trained/defm_vit_s14.pth \
 ```
 训练
 ```bash
-python scripts/runner.py --task planning_vit_local --ctl_mode rate --num_envs 256 --headless
-# 服务器：python scripts/runner.py --task planning_vit_server --ctl_mode rate --num_envs 2048 --headless
+python scripts/runner.py --task planning_defm --ctl_mode rate --num_envs 256 --headless
+# 服务器可提高并行环境数，例如 --num_envs 2048
 ```
 测试（单环境）
 ```bash
-python -u scripts/runner.py --play --task planning_vit_local --ctl_mode rate --num_envs 1 \
-  --checkpoint /workspace/AirGym/runs/ppo_planning_vit_03-06-58-55/nn/ppo_planning_vit.pth
+python -u scripts/runner.py --play --task planning_defm --ctl_mode rate --num_envs 1 \
+  --checkpoint /workspace/AirGym/runs/ppo_planning_defm_03-06-58-55/nn/ppo_planning_defm.pth
 ```
 - Loading the Model：`network.defm.model_folder + model_file` 指向 `defm_vit_s14.pth`。  
 - Preprocessing：AirGym 深度 `(N,1,120,212)` 会恢复为米制深度（`depth_scale_m=4.5`），再做 DeFM 三通道 metric-aware 归一化。  
@@ -102,6 +102,123 @@ spatial_tokens = output[0][0]
 class_token = output[0][1]
 ```
 
+## TensorBoard 指标详解（Planning / compact 模式）
+
+以下说明基于当前 planning 系列配置（`tb_log_mode: compact`、`use_diagnostics: True`）下，训练时实际写入的标量条目。
+
+- 横轴说明：`/frame` 表示按环境步数（更适合看训练趋势）；`info/*`、`losses/*` 没有后缀，但也是按 `frame` 记录。
+- 统计窗口说明：`done/*` 是“单次打印统计周期（约一个 epoch）内”的计数与占比，不是全程累计。
+
+### A. PPO 基础损失与训练状态
+
+- `losses/a_loss`：策略损失（actor loss）。  
+  一般不要求单调下降，关注是否稳定、是否突然爆炸。
+
+- `losses/c_loss`：价值函数损失（critic loss）。  
+  趋势通常应下降并趋于平稳，持续偏大常表示值函数拟合不足。
+
+- `losses/entropy`：策略熵。  
+  熵高表示探索强，熵低表示策略更确定；后期通常会下降。
+
+- `losses/bounds_loss`：动作均值边界正则损失。  
+  抑制策略输出超出 soft bound（默认 1.1）太多；过大说明动作分布过“冲”。
+
+- `info/kl`：新旧策略 KL。  
+  与自适应学习率强相关；过大代表更新过猛，过小代表更新偏保守。
+
+- `info/last_lr`：当前学习率（调度后）。  
+  配合 `info/kl` 看学习率调度是否正常。
+
+- `info/lr_mul`：学习率倍率。  
+  自适应调度内部系数；接近 1 表示变化不大。
+
+- `info/e_clip`：当前 PPO clip 阈值（含 lr_mul 影响）。  
+  反映当前策略更新允许的截断范围。
+
+- `info/epochs`：训练 epoch 计数。
+
+### B. 任务结果与回报
+
+- `episode/reward/frame`：原始回合回报均值。  
+  最核心目标指标之一，通常希望整体上升。
+
+- `episode/shaped_reward/frame`：shape 后回报均值。  
+  当前配置 `reward_shaper.scale_value=0.1`，且 timeout 场景会加 value bootstrap 项，所以它与原始回报不完全等比例。
+
+- `episode/length/frame`：回合步数均值。  
+  在导航任务里，和 `done/rate_*` 联合看更有意义（长回合可能是成功，也可能是超时）。
+
+### C. 与任务约束直接相关（重点看）
+
+- `done/episodes/frame`：该统计周期内结束回合总数（分母）。
+
+- `done/count_goal/frame`：达到目标回合数。
+- `done/count_timeout/frame`：超时结束回合数。
+- `done/count_oob/frame`：平面越界回合数。
+- `done/count_height/frame`：高度越界回合数。
+- `done/count_heading/frame`：航向约束失败回合数。
+- `done/count_collision/frame`：碰撞结束回合数。
+- `done/count_unknown/frame`：未归类结束回合数（应尽量接近 0）。
+
+- `done/rate_goal/frame`：`count_goal / episodes`，应上升。
+- `done/rate_timeout/frame`：应按任务目标判断，通常中后期应下降或与目标率此消彼长。
+- `done/rate_oob/frame`：应下降（越界减少）。
+- `done/rate_height/frame`：应下降（高度违规减少）。
+- `done/rate_heading/frame`：应下降（航向违规减少）。
+- `done/rate_collision/frame`：应下降（碰撞减少）。
+- `done/rate_unknown/frame`：应接近 0。
+
+### D. 奖励分解（你关心“是否在优化约束”就看这组）
+
+- `episode_info/reward/frame`：环境内部总 reward 均值（未经过 reward_shaper）。
+
+- `episode_info/forward_reward/frame`：前进/接近目标奖励分量。  
+  一般希望整体抬升。
+
+- `episode_info/reach_goal_reward/frame`：到达目标奖励分量（触发时有大正奖励）。  
+  与 `done/rate_goal/frame` 正相关。
+
+- `episode_info/terminal_penalty/frame`：终止惩罚分量（oob/height/heading/collision）。  
+  这是负值项，理想趋势是“绝对值变小、向 0 靠近”。
+
+### E. 诊断项（训练稳定性）
+
+- `diagnostics/exp_var`：值函数解释方差（越接近 1 越好）。  
+  <0 说明 value 预测比常数基线还差。
+
+- `diagnostics/rms_value/mean`：value 归一化器运行均值。
+- `diagnostics/rms_value/var`：value 归一化器运行方差。  
+  用于观察值函数尺度漂移是否异常。
+
+- `diagnostics/clip_frac/0`
+- `diagnostics/clip_frac/1`
+- `diagnostics/clip_frac/2`
+- `diagnostics/clip_frac/3`
+- `diagnostics/clip_frac/4`  
+  对应每个 mini-epoch（当前 `mini_epochs=5`）的 PPO clip 比例。  
+  长期过高说明更新太激进，长期过低说明 clip 几乎不起作用。
+
+### F. 性能项（吞吐，不是策略质量）
+
+- `performance/total_fps`：采样+推理+更新总体 FPS。
+- `performance/policy_fps`：采样+推理阶段 FPS（不含更新）。
+- `performance/rl_update_time`：单次更新耗时。
+
+这些用于排查训练速度，不用于判断策略是否学好。
+
+### 建议的最小关注面板（10 条）
+
+1. `episode/reward/frame`
+2. `episode/length/frame`
+3. `done/rate_goal/frame`
+4. `done/rate_oob/frame`
+5. `done/rate_height/frame`
+6. `done/rate_heading/frame`
+7. `episode_info/terminal_penalty/frame`
+8. `losses/a_loss`
+9. `losses/c_loss`
+10. `info/kl`
+
 ## experimental
 
 ### 复现/更新深度 VAE
@@ -122,7 +239,7 @@ python scripts/train_depth_vae.py \
   --headless \
   --sim-device cuda:0 \
   --rl-device cuda:0 \
-  --policy-config scripts/config/ppo_planning_local.yaml \
+  --policy-config scripts/config/ppo_planning_vae.yaml \
   --policy-checkpoint trained/planning_cnn_rate.pth \
   --policy-random-prob 0.4 \
   --kl-weight 5.0 \

@@ -219,7 +219,7 @@ python scripts/runner.py --play --task hovering --num_envs 64 --ctl_mode rate --
 ```
 Use `planning` task as an example, load and play the trained model from dir `\trained`:
 ```bash
-python scripts/runner.py --play --ctl_mode rate --num_envs 4 --task planning --checkpoint trained/planning_cnn_rate.pth
+python scripts/runner.py --play --ctl_mode rate --num_envs 4 --task planning_cnn --checkpoint trained/planning_cnn_rate.pth
 ```
 
 > Important: ***emNavi*** provide a general quadrotor sim2real approach, please refer to **AirGym-Real** @https://github.com/emNavi/AirGym-Real.
