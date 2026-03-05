@@ -16,7 +16,7 @@ class PlanningCfg(BaseConfig):
         env_spacing = 14  # not used with heightfields/trimeshes
         episode_length_s = 16 # episode length in seconds
         num_control_steps_per_env_step = 1 # number of control & physics steps between camera renders
-        reset_on_collision = False # reset environment when contact force on quadrotor is above a threshold
+        reset_on_collision = True # reset environment when contact force on quadrotor is above a threshold
         create_ground_plane = True # create a ground plane
 
         cam_dt = 0.04 # camera render time interval

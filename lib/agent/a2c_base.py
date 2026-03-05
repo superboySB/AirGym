@@ -231,6 +231,28 @@ class A2CBase(BaseAlgorithm):
         self.minibatch_size_per_env = self.config.get('minibatch_size_per_env', 0)
         self.minibatch_size = self.config.get('minibatch_size', self.num_actors * self.minibatch_size_per_env)
 
+        # When num_envs is overridden from CLI, a static minibatch_size from yaml can
+        # become invalid (e.g. minibatch_size > batch_size or not dividing batch_size).
+        # Auto-adjust to the largest valid divisor to keep debug/small-scale runs working.
+        if self.minibatch_size <= 0:
+            raise ValueError(f"Invalid minibatch_size={self.minibatch_size}. It must be > 0.")
+        if self.minibatch_size > self.batch_size or (self.batch_size % self.minibatch_size != 0):
+            original_minibatch_size = self.minibatch_size
+            adjusted_minibatch_size = min(self.minibatch_size, self.batch_size)
+            while adjusted_minibatch_size > 0 and (self.batch_size % adjusted_minibatch_size != 0):
+                adjusted_minibatch_size -= 1
+            if adjusted_minibatch_size <= 0:
+                raise ValueError(
+                    f"Could not find a valid minibatch_size for batch_size={self.batch_size} "
+                    f"(requested {original_minibatch_size})."
+                )
+            self.minibatch_size = adjusted_minibatch_size
+            if self.global_rank == 0:
+                print(
+                    f"Adjusted minibatch_size from {original_minibatch_size} to {self.minibatch_size} "
+                    f"to divide batch_size={self.batch_size}."
+                )
+
         self.num_minibatches = self.batch_size // self.minibatch_size
         assert(self.batch_size % self.minibatch_size == 0)
 

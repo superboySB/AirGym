@@ -179,6 +179,8 @@ class ContinuousA2CBase(A2CBase):
     def train(self):
         self.init_tensors()
         self.last_mean_rewards = -100500
+        # Track best observed episode reward in this run for TensorBoard visualization.
+        self.best_observed_reward = self.last_mean_rewards
         start_time = time.time()
         total_time = 0
         rep_count = 0
@@ -227,6 +229,7 @@ class ContinuousA2CBase(A2CBase):
                     mean_shaped_rewards = self.game_shaped_rewards.get_mean()
                     mean_lengths = self.game_lengths.get_mean()
                     self.mean_rewards = mean_rewards[0]
+                    self.best_observed_reward = max(float(self.best_observed_reward), float(mean_rewards[0]))
 
                     for i in range(self.value_size):
                         reward_tag = 'episode/reward' if i == 0 else f'episode/reward_{i}'
@@ -238,6 +241,11 @@ class ContinuousA2CBase(A2CBase):
                             self.writer.add_scalar(f'{reward_tag}/time', mean_rewards[i], total_time)
                             self.writer.add_scalar(f'{shaped_reward_tag}/iter', mean_shaped_rewards[i], epoch_num)
                             self.writer.add_scalar(f'{shaped_reward_tag}/time', mean_shaped_rewards[i], total_time)
+
+                    self.writer.add_scalar('episode/reward_max/frame', self.best_observed_reward, frame)
+                    if not self.tb_compact:
+                        self.writer.add_scalar('episode/reward_max/iter', self.best_observed_reward, epoch_num)
+                        self.writer.add_scalar('episode/reward_max/time', self.best_observed_reward, total_time)
 
                     self.writer.add_scalar('episode/length/frame', mean_lengths, frame)
                     if not self.tb_compact:

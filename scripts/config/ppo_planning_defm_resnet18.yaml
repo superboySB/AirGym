@@ -1,0 +1,97 @@
+params:
+  # seed: 8
+  algo:
+    name: a2c_continuous
+
+  model:
+    name: continuous_a2c_logstd
+
+  load_checkpoint: False
+
+  network:
+    name: actor_critic
+    separate: False
+    space:
+      continuous:
+        mu_activation: None
+        sigma_activation: None
+        mu_init:
+          name: default
+        sigma_init:
+          name: const_initializer
+          val: 0
+        fixed_sigma: True
+    mlp:
+      units: [64, 128, 64]
+      d2rl: False
+      activation: elu
+      initializer:
+        name: default
+        scale: 2
+    defm:
+      model_name: "defm_resnet18"
+      model_folder: "/workspace/AirGym/trained"
+      model_file: "defm_resnet18.pth"
+      output_dim: 96
+      target_size: [224, 224]
+      model_img_size: [224, 224]
+      patch_size: null
+      freeze_encoder: True
+      freeze_backbone: True
+      include_class_token: True
+      include_spatial_pool: False
+      projector_hidden_dim: 128
+      bifpn_out_channels: 128
+      bifpn_blocks: 1
+      max_depth_c1: 100.0
+      max_depth_c2: 9.0
+      depth_scale_m: 4.5
+      interpolation_mode: "bilinear"
+
+  config:
+    env_name: planning_defm_resnet18
+    env_config:
+      use_image: True
+
+    name: ppo_planning_defm_resnet18
+    reward_shaper:
+      scale_value: 0.1
+
+    normalize_advantage: True
+    gamma: 0.99
+    tau: 0.95
+    ppo: True
+    learning_rate: 3e-4
+    lr_schedule: adaptive
+    kl_threshold: 0.008
+    save_best_after: 10
+    score_to_win: 100000
+    grad_norm: 1.5
+    entropy_coef: 0
+    truncate_grads: True
+    e_clip: 0.2
+    clip_value: False
+    num_actors: 512
+    horizon_length: 24
+    minibatch_size: 512
+    mini_epochs: 4
+    critic_coef: 2
+    normalize_input: True
+    bounds_loss_coef: 0.0001
+    max_epochs: 30000
+    normalize_value: True
+    use_diagnostics: True
+    value_bootstrap: True
+    use_smooth_clamp: False
+    mixed_precision: True
+    inference_amp: True
+    tb_log_mode: compact
+    tb_log_direct_info: False
+    tb_episode_info_keys: [reward, forward_reward, reach_goal_reward, terminal_penalty]
+
+    save_frequency: 20
+
+    player:
+      deterministic: True
+      games_num: 100000
+      use_vecenv: True

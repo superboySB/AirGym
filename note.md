@@ -30,38 +30,38 @@ docker exec -it airgym-sim /bin/bash
 cd /workspace/AirGym
 pip install -e /workspace/AirGym
 
-python scripts/example.py --task hovering --ctl_mode rate --num_envs 4
+python scripts/runner.py --task hovering --ctl_mode rate --num_envs 4
 ```
 镜像在构建阶段已完成 `rlPx4Controller` 与 Isaac Gym 安装，不包含 AirGym 项目代码；项目代码通过 `docker run -v ${LOCAL_AIRGYM_DIR}:/workspace/AirGym` 挂载，便于持续开发与管理。首次进入容器后执行一次 `pip install -e /workspace/AirGym` 即可。
 
 ## 2. Planning: 深度视觉 + Rate Control
 
 - Planning 任务默认在每个环境的 `X152b` 机体上挂载深度相机，观测包含 `image + observation`。  
-- 下面三种方法都分为训练和测试（`--play`）；测试统一用 `--num_envs 1`。  
+- 下面四种方法都分为训练和测试（`--play`）；测试统一用 `--num_envs 1 --seed 0`。  
 - `--play` 阶段已加入事件提示：每回合都会打印 `event: done=... goal=... collision=... timeout=... height=... oob=... heading=... unknown=...`，并输出带阈值与实测数值的 `event_reason` 句子（例如目标距离、当前位置 x/y/z、heading_reward 等）；若发生碰撞会额外打印 `event: collision detected`（训练阶段不打印）。
 
 ### 方法A：端到端 CNN + Rate Control
 训练（从头学视觉+控制）
 ```bash
-python scripts/runner.py --task planning_cnn --ctl_mode rate --num_envs 256 --headless
-# 服务器大规模训练可用：--num_envs 2048
+python scripts/runner.py --task planning_cnn --ctl_mode rate --num_envs 512 --headless
+# 服务器大规模训练可用：--num_envs 4096
 ```
 测试（单环境）
 ```bash
-python -u scripts/runner.py --play --task planning_cnn --ctl_mode rate --num_envs 1 \
-  --checkpoint /workspace/AirGym/trained/planning_cnn_rate.pth
+python -u scripts/runner.py --play --task planning_cnn --ctl_mode rate --num_envs 1 --seed 0 \
+  --checkpoint /workspace/AirGym/trained/20260304/ppo_planning_cnn_03-15-34-29/ppo_planning_cnn.pth
 ```
 
 ### 方法B：预训练 VAE + Rate Control
 训练（冻结预训练 VAE，仅训练 RL 策略）
 ```bash
-python scripts/runner.py --task planning_vae --ctl_mode rate --num_envs 256 --headless
-# 服务器可提高并行环境数，例如 --num_envs 512
+python scripts/runner.py --task planning_vae --ctl_mode rate --num_envs 512 --headless
+# 服务器可提高并行环境数，例如 --num_envs 4096
 ```
 测试（单环境）
 ```bash
-python -u scripts/runner.py --play --task planning_vae --ctl_mode rate --num_envs 1 \
-  --checkpoint /workspace/AirGym/trained/20251022/ppo_planning_vae_30000.pth
+python -u scripts/runner.py --play --task planning_vae --ctl_mode rate --num_envs 1 --seed 0 \
+  --checkpoint /workspace/AirGym/trained/20260304/ppo_planning_vae_03-15-34-59/ppo_planning_vae.pth
 ```
 
 ### 方法C：预训练 DeFM ViT-S/14 + Rate Control
@@ -74,13 +74,14 @@ wget -O /workspace/AirGym/trained/defm_vit_s14.pth \
 ```
 训练
 ```bash
-python scripts/runner.py --task planning_defm --ctl_mode rate --num_envs 256 --headless
-# 服务器可提高并行环境数，例如 --num_envs 2048
+python scripts/runner.py --task planning_defm --ctl_mode rate --num_envs 512 --headless
+# 服务器可提高并行环境数，例如 （TODO: CUDA_VISIBLE_DEVICES的设置不起作用！）
+# python scripts/runner.py --task planning_defm --ctl_mode rate --num_envs 4096 --headless
 ```
 测试（单环境）
 ```bash
-python -u scripts/runner.py --play --task planning_defm --ctl_mode rate --num_envs 1 \
-  --checkpoint /workspace/AirGym/runs/ppo_planning_defm_03-06-58-55/nn/ppo_planning_defm.pth
+python -u scripts/runner.py --play --task planning_defm --ctl_mode rate --num_envs 1 --seed 0 \
+  --checkpoint /workspace/AirGym/trained/20260304/ppo_planning_defm_03-15-30-48/ppo_planning_defm.pth
 ```
 - Loading the Model：`network.defm.model_folder + model_file` 指向 `defm_vit_s14.pth`。  
 - Preprocessing：AirGym 深度 `(N,1,120,212)` 会恢复为米制深度（`depth_scale_m=4.5`），再做 DeFM 三通道 metric-aware 归一化。  
@@ -101,6 +102,41 @@ with torch.no_grad():
 spatial_tokens = output[0][0]
 class_token = output[0][1]
 ```
+
+### 方法D：预训练 DeFM ResNet-18 + Rate Control
+- 新增任务/配置：`planning_defm_resnet18`，`scripts/config/ppo_planning_defm_resnet18.yaml`。
+- 下载权重（一次即可）：
+```bash
+wget -O /workspace/AirGym/trained/defm_resnet18.pth \
+  https://huggingface.co/leggedrobotics/defm/resolve/main/defm_resnet18.pth
+```
+训练
+```bash
+python scripts/runner.py --task planning_defm_resnet18 --ctl_mode rate --num_envs 512 --headless
+# 服务器可提高并行环境数，例如 --num_envs 4096
+```
+测试（单环境）
+```bash
+python -u scripts/runner.py --play --task planning_defm_resnet18 --ctl_mode rate --num_envs 1 --seed 0 \
+  --checkpoint /workspace/AirGym/trained/20260304/ppo_planning_defm_resnet18_04-10-18-15/ppo_planning_defm_resnet18.pth
+```
+- Loading the Model：`network.defm.model_folder + model_file` 指向 `defm_resnet18.pth`。  
+- Preprocessing：与方法 C 相同，先将 AirGym 深度恢复米制并做 DeFM metric-aware 三通道归一化。  
+- Inference：按 DeFM ConvNet 用法提取 `global_backbone` 特征，再与数值状态拼接进入 PPO。
+
+## ABCD如何对比以及判定阈值说明
+
+- 公平对比建议固定：同一 `--ctl_mode rate`、同一 `--num_envs 1`、同一 `--seed 0`、同一地图与代码版本、同一统计回合数。  
+- 当前 `planning` 默认 `reset_on_collision=True`，碰撞会像超时/越界一样触发回合结束，并在 `--play` 日志给出 `event` 与 `event_reason`。  
+
+`event` 字段与阈值（A/B/C/D一致）：
+- `goal=1`：目标距离 `< 0.5 m`。  
+- `timeout=1`：`progress_buf >= max_episode_length - 1`。  
+- `collision=1`：至少一个机体刚体链接接触力范数 `> 0.1`。  
+- `height=1`：高度不在 `[1.2, 1.8] m`（即 `FLY_HEIGHT=1.5` 的 `±0.3`）。  
+- `oob=1`：平面越界，要求 `x∈[-8.5, 8.5]` 且 `y∈[-4.0, 4.0]`。  
+- `heading=1`：`heading_reward < 0.25`。  
+- `unknown=1`：触发了未归类终止条件（理想应接近 0）。
 
 ## TensorBoard 指标详解（Planning / compact 模式）
 
@@ -255,7 +291,7 @@ python scripts/train_depth_vae.py \
 - `visualize-interval/count` 会在 TensorBoard 的 Images 标签页生成彩色的原始与重建深度图（单通道复制到 3 通道），方便检查重建质量。
 - 若要替换原模型，只需把 `scripts/config/ppo_planning_*.yaml` 中 `network.vae.model_file` 指向生成的 `nn/vae_model.pth`（或自定义输出路径）。
 
-## 3. 服务器脚本（sb-RL-172）
+## 3. 服务器脚本（sb-RL-172）（注意这个环境没办法指定用什么卡，需要切割devices在docker run）
 容器与镜像命名规则（以 `sb-RL-172`、`20260121` 为例）：
 
 - 容器名：`airgym-sim-20260121`

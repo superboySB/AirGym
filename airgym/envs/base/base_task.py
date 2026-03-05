@@ -54,11 +54,9 @@ class BaseTask():
         else:
             self.device = 'cpu'
 
-        # graphics device for rendering, -1 for no rendering
+        # Graphics device for rendering. Use CUDA logical device index so this
+        # remains valid when CUDA_VISIBLE_DEVICES remaps visible GPUs.
         self.graphics_device_id = self.sim_device_id
-        if self.headless == True:
-            # self.graphics_device_id = -1
-            self.graphics_device_id = 0
 
         self.num_envs = cfg.env.num_envs
         self.num_obs = cfg.env.num_observations

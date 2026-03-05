@@ -61,6 +61,13 @@ TASK_CONFIGS = [
         'task_class': 'Planning'
     },
     {
+        'name': 'planning_defm_resnet18',
+        'config_module': 'task.planning_config',
+        'config_class': 'PlanningCfg',
+        'task_module': 'task.planning',
+        'task_class': 'Planning'
+    },
+    {
         'name': 'maplanning',
         'config_module': 'task.maplanning_config',
         'config_class': 'MAPlanningCfg',
